@@ -2,16 +2,6 @@
 # Joseph White, Carolina Tovar, Tarciso Leao, Felix Lim
 # 2024/11/27
 
-install.packages('rgbif')
-install.packages('CoordinateCleaner')
-install.packages('rnaturalearthdata')
-install.packages('tidysdm')
-install.packages('tidyterra')
-install.packages('overlapping')
-install.packages('ranger')
-install.packages('xgboost')
-install.packages('DALEX')
-
 # Load in libraries
 library(rgbif)
 library(CoordinateCleaner)
