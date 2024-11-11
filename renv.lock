@@ -1487,20 +1487,6 @@
       ],
       "Hash": "d413e0fef796c9401a4419485f709ca1"
     },
-    "pacman": {
-      "Package": "pacman",
-      "Version": "0.5.1",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": [
-        "R",
-        "methods",
-        "remotes",
-        "stats",
-        "utils"
-      ],
-      "Hash": "b37932b67288bc62bb81686b2f337a7d"
-    },
     "parallelly": {
       "Package": "parallelly",
       "Version": "1.38.0",
@@ -1812,20 +1798,6 @@
         "tibble"
       ],
       "Hash": "76c9e04c712a05848ae7a23d2f170a40"
-    },
-    "remotes": {
-      "Package": "remotes",
-      "Version": "2.5.0",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": [
-        "R",
-        "methods",
-        "stats",
-        "tools",
-        "utils"
-      ],
-      "Hash": "3ee025083e66f18db6cf27b56e23e141"
     },
     "renv": {
       "Package": "renv",

@@ -1,8 +1,8 @@
 # RGB Kew MSc Spatial Analysis Course 2024
-# Joseph White, Carolina Tovar, Tarciso Leao, Felix Lim
+# Joseph White, Carolina Tovar, Moabe Fernandes, Felix Lim
 # 2024/11/27
 
-# Load in libraries
+#### Load in libraries ----
 library(rgbif)
 library(CoordinateCleaner)
 library(rnaturalearth)
@@ -15,6 +15,7 @@ library(MASS)
 library(patchwork)
 library(sf)
 library(DALEX)
+source('scripts/helper_functions/mtp.R')
 
 ### 1. Load in data ----
 #### 1a. Country boundary ----
@@ -37,6 +38,8 @@ rast_files <- list.files(paste0(getwd(),'/data/environmental_data/'), full.names
 env_vars <- app(sds(rast_files),c)
 names(env_vars) <- c("mean_ann_t",'mean_t_warm_q','mean_t_cold_q','ann_p', 'p_wet_m','p_dry_m','p_seas','p_wet_q','p_dry_q','p_warm_q','p_cold_q',"mean_diurnal_t_range","isothermality", "t_seas", 'max_t_warm_m','min_t_cold_m',"t_ann_range",'mean_t_wet_q','mean_t_dry_q', 'elev')
 names(env_vars)
+env_vars
+plot(env_vars[[1]], main = names(env_vars)[[1]])
 
 ### 2. Clean occurrence data ----
 # keep the necessary columns and rename them
@@ -44,101 +47,63 @@ spp_raw <- gbif_data %>%
               dplyr::select(gbifID, scientificName, latitude = decimalLatitude, longitude = decimalLongitude)
 
 # CoordinateCleaner
-spp_flag <- spp_raw %>% 
+spp_raw <- spp_raw %>% 
                 clean_coordinates(
                   species = 'scientificName',
                   lon = "longitude",
                   lat = "latitude",
                   value = "spatialvalid")
-head(spp_flag)
+head(spp_raw)
 
 # filter to only include valid records
-spp <- spp_flag %>%
+spp_clean <- spp_raw %>%
           filter(.summary == TRUE) %>%
           dplyr::select(gbifID:longitude)
 
 # spatial thin
 set.seed(1234567)
-spp <- thin_by_cell(spp, raster = env_vars[[1]])
+spp_thin <- thin_by_cell(spp_clean, raster = env_vars[[1]])
 nrow(spp)
-
-# thin by distance
-set.seed(1234567)
-spp_thin <- thin_by_dist(spp, dist_min = km2m(5))
-nrow(spp_thin)
 
 # convert to sf 
 spp_thin <- st_as_sf(spp_thin, coords = c('longitude', 'latitude'), crs = 'EPSG:4326')
 
 # plot output
 ggplot() +
-  geom_spatraster(data = env_vars, aes(fill = ann_p)) +
+  geom_spatraster(data = env_vars[[1]]) +
   scale_fill_cross_blended_c(palette = 'arid', direction = -1) +
   geom_sf(data = spp_thin) + 
   theme_void() +
   guides(fill="none")
 
 ### 3. Generate background/pseudo-absence points ----
-# download GBIF occurrence data for the genus
-genus_name <- word(species_name, 1)
-gbif_download_genus <- occ_data(scientificName = genus_name, hasCoordinate = TRUE, country = 'MG', limit = 10000)
-gbif_data_genus <- gbif_download_genus$data
-# remove our model species
-gbif_data_genus <- gbif_data_genus %>% filter(!species %in% species_name)
-table(gbif_data_genus$scientificName)
-
-# keep the necessary columns
-genus_raw <- gbif_data_genus %>% 
-                      dplyr::select(gbifID, 
-                                    latitude = decimalLatitude, 
-                                    longitude = decimalLongitude)
-
-# convert to spatvect
-genus_vect <- vect(genus_raw, geom = c('longitude', 'latitude'), crs = 'EPSG:4326')
-
-# taxon targeted collection density
-genus_density <- rasterize(genus_vect, env_vars[[1]], 
-                                    fun = "count")
-
-output_resolution <- res(env_vars)[1]*100
-df <- as.data.frame(genus_density, xy = T)
-kde <- kde2d(df$x, df$y,
-             n = c(nrow(env_vars), ncol(env_vars)),
-             h = rep(output_resolution,2))
-df = expand.grid(kde$x, kde$y, KEEP.OUT.ATTRS = FALSE)
-df$z = as.vector(kde$z)
-genus_density_rast <- rast(df, type = 'xyz', crs = crs(env_vars))
-genus_density_rast <- project(genus_density_rast, env_vars[[1]], method = 'bilinear')
-genus_density_rast <- crop(genus_density_rast, env_vars[[1]], mask = T)
-plot(genus_density_rast)
-
-# sample background with taxon targeted collection density weights
-set.seed(1234567)
-spp_all <- sample_background(data = spp_thin, 
-                              raster = genus_density_rast,
-                              n = 3 * nrow(spp_thin),
-                              method = "bias",
-                              class_label = "background",
-                              return_pres = TRUE)
-
-set.seed(1234567)
+set.seed(1)
 spp_all <- sample_pseudoabs(data = spp_thin, 
-                             raster = genus_density_rast,
+                             raster = env_vars,
                              n = 1 * nrow(spp_thin),
                              method = c('dist_min', 10000),
                              class_label = "pseudoabs",
                              return_pres = TRUE)
 
+# Alternative method
+# set.seed(1)
+# spp_all <- sample_background(data = spp_thin, 
+#                             raster = env_vars,
+#                             n = 10000,
+#                             method = 'random',
+#                             class_label = "background",
+#                             return_pres = TRUE)
+
 # plot output
 ggplot() +
-  geom_spatraster(data = env_vars, aes(fill = ann_p)) +
+  geom_spatraster(data = env_vars[[1]]) +
   scale_fill_cross_blended_c(palette = 'arid', direction = -1) +
   geom_sf(data = spp_all[spp_all$class == 'presence',]) + 
   theme_void() +
   guides(fill="none") +
 
 ggplot() +
-  geom_spatraster(data = env_vars, aes(fill = ann_p)) +
+  geom_spatraster(data = env_vars[[1]]) +
   scale_fill_cross_blended_c(palette = 'arid', direction = -1) +
   geom_sf(data = spp_all, aes(col = class)) + 
   theme_void() +
@@ -157,13 +122,13 @@ dist_env_vars <- spp_all %>%
     dist_pres_vs_bg(class)
 
 # suggested variables based on distance discrimination
-top8_vars <- names(dist_env_vars[1:8])
+top15_vars <- names(dist_env_vars[1:15])
 
 # view pairs
-pairs(env_vars[[top8_vars]], maxcells = 10000)
+pairs(env_vars[[top15_vars]], maxcells = 10000)
 
 # identify multi-collinearity in environmental variables
-vars_uncor <- filter_collinear(env_vars[[top5_vars]], cutoff = 0.8, method = "cor_caret")
+vars_uncor <- filter_collinear(env_vars[[top15_vars]], cutoff = 0.7, method = "cor_caret")
 vars_uncor
 
 # clean datasets based on filtered environmental variables
@@ -188,29 +153,30 @@ autoplot(spp_cv, aes(shape = class)) +
   theme_void()
 
 ### 5. Run distribution models ----
-# create the model formual
+# create the model formula
 spp_rec <- recipe(spp_all, formula = class ~ .)
 
 # design the model workflows
 spp_models <- workflow_set(
   preproc = list(default = spp_rec),
-  models = list(maxent = sdm_spec_maxent(),
-                rf = sdm_spec_rf(),
-                gbm = sdm_spec_boost_tree()))  %>%
+  models = list(maxent = sdm_spec_maxent(tune = 'sdm'),
+                rf = sdm_spec_rf(tune = 'sdm'),
+                gbm = sdm_spec_boost_tree(tune = 'sdm')),
+  cross = TRUE)  %>%
   # tweak controls to store information needed later to create the ensemble
   option_add(control = control_ensemble_grid())
 
 # run the models
-set.seed(1234567)
+set.seed(1)
 spp_models <- spp_models %>%
                 workflow_map('tune_grid',
-                              resamples = spp_cv,
-                              grid = 5,
-                              metrics = sdm_metric_set(), 
-                              verbose = T)
+                            resamples = spp_cv,
+                            grid = 5,
+                            metrics = sdm_metric_set(),
+                            verbose = T)
 
 # show mean metric values for each model configuration
-spp_models %>% collect_metrics()
+# spp_models %>% collect_metrics()
 autoplot(spp_models)
 
 # extract hyper-parameters and metrics for individual models
@@ -219,24 +185,44 @@ names(model_results) <- spp_models$wflow_id
 model_parameters <- map_dfr(model_results, ~.x, .id = 'model') %>%
   dplyr::select(model, id, .metrics) %>%
   unnest(.metrics)
-model_parameters
+
+#### what are all of the hyper parameters used in the models?
+params <- names(model_parameters)[which(!names(model_parameters) %in% c('model', 'id', '.metric', '.estimator', '.estimate', '.config'))]
+
+(hyper_parameters_used <- model_parameters %>%
+  group_by(model) %>%
+  summarise(across(params, ~ toString(sort(unique(.))))))
 
 # create the model ensemble by selecting the best model using boyce_cont
 spp_ensemble <- simple_ensemble() %>%
   add_member(spp_models, metric = "boyce_cont")
 autoplot(spp_ensemble)
 
+# what are the best hyper-parameters for these models?
+final_parameters <- lapply(spp_ensemble$workflow, extract_spec_parsnip)
+species_final_params <- data.frame(spp = species_name, 
+           maxent_fc = final_parameters[[1]]$args$feature_classes[[2]],
+           maxent_reg = final_parameters[[1]]$args$regularization_multiplier[[2]],
+           rf_mtry = final_parameters[[2]]$args$mtry[[2]],
+           gbm_mtry = final_parameters[[3]]$args$mtry[[2]],
+           gbm_trees = final_parameters[[3]]$args$trees[[2]],
+           gbm_tdepth = final_parameters[[3]]$args$tree_depth[[2]],
+           gbm_lrate = final_parameters[[3]]$args$learn_rate[[2]],
+           gbm_lossr = final_parameters[[3]]$args$loss_reduction[[2]],
+           gbm_stop = final_parameters[[3]]$args$stop_iter[[2]])
+species_final_params
+
 ### 6. Predict species suitability ----
-# use a metric threshold e.g. boyce_cont >= 0.4
-prediction_present_boyce <- predict_raster(
+# use all models or a metric threshold e.g. boyce_cont >= 0.25
+pred_prob <- predict_raster(
                 spp_ensemble, 
                 env_vars,
-                metric_thresh = c("boyce_cont", 0.4),
+                metric_thresh = c("boyce_cont", 0.25),
                 fun = "median")
 
 # view prediction
 ggplot() +
-  geom_spatraster(data = prediction_present_boyce, 
+  geom_spatraster(data = pred_prob, 
                   aes(fill = median)) +
   scale_fill_whitebox_c(palette = 'high_relief', direction = -1,
                         name = 'Habitat\nsuitability',
@@ -245,31 +231,33 @@ ggplot() +
           size = 0.5, alpha = 0.25) +
   theme_void()
 
-# select threshold value
-spp_ensemble <- calib_class_thresh(
-                    spp_ensemble,
-                    class_thresh = c('sensitivity', 0.75), 
-                    metric_thresh = c("boyce_cont", 0.4))
+# apply the P10 threshold
+pred_binary <- sdm_threshold(pred_prob, st_coordinates(spp_thin), binary = TRUE)
 
-# create a binary map
-prediction_present_boyce_binary <- predict_raster(
-  spp_ensemble, 
-  env_vars,
-  type = "class",
-  class_thresh = c('sensitivity', 0.75), 
-  metric_thresh = c("boyce_cont", 0.4),
-  fun = "median")
+# select threshold value
+# spp_ensemble <- calib_class_thresh(
+#                     spp_ensemble,
+#                     class_thresh = c('sensitivity', 0.75), 
+#                     metric_thresh = c("boyce_cont", 0.4))
+
+# # create a binary map
+# pred_binary <- predict_raster(
+#   spp_ensemble, 
+#   env_vars,
+#   type = "class",
+#   class_thresh = c('sensitivity', 0.75), 
+#   metric_thresh = c("boyce_cont", 0.4),
+#   fun = "median")
 
 # view prediction
 ggplot() +
-  geom_spatraster(data = prediction_present_boyce_binary, 
-                  aes(fill = binary_median)) +
-  scale_fill_manual(values = c('orange', 'gray90'), 
+  geom_spatraster(data = as.factor(pred_binary)) +
+  scale_fill_manual(values = c('gray90', 'orange'), 
                     na.value = 'transparent',
                     name = 'Habitat\nsuitability',
-                    labels = c('present', 'absent')) +
+                    labels = c('absent', 'present', '')) +
   geom_sf(data = spp_all[spp_all$class == 'presence',], 
-          size = 0.5, alpha = 0.25, col = 'purple') +
+          size = 0.5, alpha = 0.25, col = 'black') +
   theme_void()
 
 ### 7. Variable importance ----
@@ -283,42 +271,56 @@ vi %>%
   geom_boxplot(aes(x = reorder(variable, dropout_loss), y = dropout_loss),
                fill = 'lightblue') +
   coord_flip() +
-  labs(x = '', y = '1 - AUC loss after permutations') +
+  labs(x = '', y = 'Mean dropout loss (1 - AUC)') +
   theme_bw()
 
+# top 4 important variables
+vi_top4 <- vi %>%
+  filter(variable %in% names(env_vars)) %>%
+  as.data.frame() %>%
+  group_by(variable) %>%
+  summarise(mean_dropout_loss = mean(dropout_loss)) %>%
+  dplyr::arrange(-mean_dropout_loss) %>%
+  top_n(4)
+
 ### 8. Partial dependence plots ----
-pdp <- model_profile(explain_models, variables = names(env_vars))
+pdp <- model_profile(explain_models, variables = vi_top4$variable)
 agg_data <- as.data.frame(pdp$agr_profiles)
 
 agg_data %>%
-  filter(`_vname_` == names(env_vars)[1]) %>%
+  filter(`_vname_` == vi_top4$variable[1]) %>%
   ggplot(aes(x = `_x_`, y = `_yhat_`)) + 
   geom_line(lwd = 1, col = 'lightblue') +
-  labs(x = names(env_vars)[1], y = 'mean prediction') +
+  labs(x = vi_top4$variable[1], y = 'mean prediction') +
   scale_y_continuous(limits = c(0, max(agg_data$`_yhat_`))) +
   theme_bw() +
 
 agg_data %>%
-  filter(`_vname_` == names(env_vars)[2]) %>%
+  filter(`_vname_` == vi_top4$variable[2]) %>%
   ggplot(aes(x = `_x_`, y = `_yhat_`)) + 
   geom_line(lwd = 1, col = 'lightblue') +
-  labs(x = names(env_vars)[2], y = 'mean prediction') +
+  labs(x = vi_top4$variable[2], y = 'mean prediction') +
   scale_y_continuous(limits = c(0, max(agg_data$`_yhat_`))) +
   theme_bw() +
 
 agg_data %>%
-  filter(`_vname_` == names(env_vars)[3]) %>%
+  filter(`_vname_` == vi_top4$variable[3]) %>%
   ggplot(aes(x = `_x_`, y = `_yhat_`)) + 
   geom_line(lwd = 1, col = 'lightblue') +
-  labs(x = names(env_vars)[3], y = 'mean prediction') +
+  labs(x = vi_top4$variable[3], y = 'mean prediction') +
   scale_y_continuous(limits = c(0, max(agg_data$`_yhat_`))) +
   theme_bw() +
 
 agg_data %>%
-  filter(`_vname_` == names(env_vars)[4]) %>%
+  filter(`_vname_` == vi_top4$variable[4]) %>%
   ggplot(aes(x = `_x_`, y = `_yhat_`)) + 
   geom_line(lwd = 1, col = 'lightblue') +
-  labs(x = names(env_vars)[4], y = 'mean prediction') +
+  labs(x = vi_top4$variable[4], y = 'mean prediction') +
   scale_y_continuous(limits = c(0, max(agg_data$`_yhat_`))) +
   theme_bw() +
   plot_annotation(tag_levels = 'a', tag_suffix = ')')
+
+spp_all %>%
+  dplyr::select(class, vi_top4$variable) %>%
+  plot_pres_vs_bg(class)
+
