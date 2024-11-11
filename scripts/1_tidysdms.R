@@ -400,3 +400,4 @@ extract_df %>%
   mutate(perc = round(area/sum(area) * 100, 2))
 
 #### END ####
+renv::snapshot()
