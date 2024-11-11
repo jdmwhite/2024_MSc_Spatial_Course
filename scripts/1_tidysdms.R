@@ -15,6 +15,7 @@ library(MASS)
 library(patchwork)
 library(sf)
 library(DALEX)
+library(exactextractr)
 source('scripts/helper_functions/mtp.R')
 
 ### 1. Load in data ----
@@ -324,3 +325,78 @@ spp_all %>%
   dplyr::select(class, vi_top4$variable) %>%
   plot_pres_vs_bg(class)
 
+#### Identify overlap with Protected Areas ----
+# load in protected area shapefiles. There are 3 files, so we want to load them all in together and then bind them into one file
+prot_areas <- list.files('data/WDPA_Madagascar', pattern = '*.shp', full.names = TRUE)
+prot_areas_list <- lapply(prot_areas, read_sf)
+# bind the 3 files togther
+prot_areas_all <- bind_rows(prot_areas_list) %>% filter(MARINE == 0)
+
+#### convert to equal area projection
+# convert the protected areas
+prot_areas_all %>% 
+  st_transform(crs = 'EPSG:29702') -> prot_areas_all_proj
+
+# convert the presence/absence raster
+pred_binary %>% 
+  project(.,vect(prot_areas_all_proj), method = 'near') -> pred_binary_proj
+
+# visualise the different projections
+par(mfrow=c(1,2))
+plot(pred_binary)
+plot(vect(prot_areas_all), add = TRUE)
+plot(pred_binary_proj)
+plot(vect(prot_areas_all_proj), add = TRUE)
+
+# What is the area of species presences?
+# we select and sum only the cells with 1's, then multiply this by the size of the raster cells and lastly divide this by meters to get a result in km2.
+pres_area <- (sum(pred_binary_proj[] == 1, na.rm = TRUE) * (res(pred_binary_proj)[1]*res(pred_binary_proj)[2]) / (1000^2))
+paste('The area of species presences is',pres_area, 'km2')
+
+# Calculate the area of all cells
+all_area <- (sum(!is.na(pred_binary_proj[])) * (res(pred_binary_proj)[1]*res(pred_binary_proj)[2]) / (1000^2))
+paste('The area of all cells is',all_area, 'km2')
+
+# And lastly calculate the percentage of coverage of our species across all of Madagascar
+paste('The species presences cover',round(pres_area/all_area*100, 2), '% of Madagascar')
+
+#### We now want to work out what % of our species is found within Protected Areas
+
+# create custom function to calculate the proportion of area covered by each Protected Area
+sum_cover <- function(x){
+  list(x %>%
+         group_by(value) %>%
+         summarize(total_area = sum(coverage_area)))
+}
+
+# extract the amount of area covered 
+extract_all <- exact_extract(pred_binary_proj, prot_areas_all_proj, coverage_area = TRUE, summarize_df = TRUE, fun = sum_cover)
+# add the names of the protected areas back on to our extraction
+names(extract_all) <- prot_areas_all_proj$ORIG_NAME
+
+# convert the list to a data frame
+extract_df <- bind_rows(extract_all, .id = 'ORIG_NAME')
+# take a look at the first 6 rows
+head(extract_df)
+
+# we can now sum all of the area that overlaps with the protected areas for presences (i.e. 1's) and divide this by the total area of all presences
+area_under_pas <- extract_df %>% 
+  filter(value == 1) %>% 
+  summarise(sum(total_area)/(1000^2))
+
+paste(round(area_under_pas/pres_area * 100, 2),'% of the predicted presences are found within protected areas')
+
+# Our final step is to join our IUCN protected area categories onto our presence area data.frame. This will provide us with some information on what percentage of our species area is conserved under different categories. This provides important context on both the quality and quantity of protected areas overlapping with our species range:
+
+iucn_cat <- prot_areas_all_proj %>% 
+  st_drop_geometry() %>% 
+  dplyr::select(ORIG_NAME, IUCN_CAT)
+
+extract_df %>% 
+  left_join(iucn_cat, by = 'ORIG_NAME', relationship = 'many-to-many') %>% 
+  filter(value == 1) %>%
+  group_by(IUCN_CAT) %>%
+  summarise(area = sum(total_area)/(1000^2)) %>%
+  mutate(perc = round(area/sum(area) * 100, 2))
+
+#### END ####
