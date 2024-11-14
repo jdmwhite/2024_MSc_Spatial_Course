@@ -26,7 +26,7 @@
 
 #### Assignment:
 
-Please find the word document, MSc_SA_Assessment.docx for details on the assignment.
+Please find the word document, MSc_SA_Assessment.docx on QM+ for details on the assignment.
 
 **You are required to submit your assignment as an .docx file together with your .R script.**
 
