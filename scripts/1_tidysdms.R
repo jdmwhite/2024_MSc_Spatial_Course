@@ -1,5 +1,5 @@
 # RGB Kew MSc Spatial Analysis Course 2024
-# Joseph White, Carolina Tovar, Moabe Fernandes, Felix Lim
+# Joseph White, Carolina Tovar, Moabe Fernandes, Felix Lim, Jenny Williams
 # 2024/11/27
 
 #### Load in libraries ----
@@ -16,6 +16,7 @@ library(patchwork)
 library(sf)
 library(DALEX)
 library(exactextractr)
+library(mapview)
 source('scripts/helper_functions/mtp.R')
 
 ### 1. Load in data ----
@@ -25,7 +26,8 @@ crs(mad) <- "lonlat"
 
 #### 1a. occurrence data ----
 # Name your species
-species_name <- c("Aerangis citrata")
+species_name <- c("Bauhinia madagascariensis")
+species_name <- c("Angraecum mauritianum")
 
 # download GBIF occurrence data for this species; this takes time if there are many data points!
 gbif_download <- occ_data(scientificName = species_name, hasCoordinate = TRUE, country = 'MG', limit = 10000)
@@ -61,10 +63,22 @@ spp_clean <- spp_raw %>%
           filter(.summary == TRUE) %>%
           dplyr::select(gbifID:longitude)
 
+ggplot() +
+  geom_spatvector(data = mad) +
+  geom_point(data = spp_raw, aes(x = longitude, y = latitude)) +
+  labs(title = 'Raw GBIF data') +
+  theme_bw() +
+  
+ggplot() +
+  geom_spatvector(data = mad) +
+  geom_point(data = spp_clean, aes(x = longitude, y = latitude), col = 'forestgreen') +
+  labs(title = 'Cleaned GBIF data') +
+  theme_bw()
+
 # spatial thin
 set.seed(1234567)
 spp_thin <- thin_by_cell(spp_clean, raster = env_vars[[1]])
-nrow(spp)
+nrow(spp_thin)
 
 # convert to sf 
 spp_thin <- st_as_sf(spp_thin, coords = c('longitude', 'latitude'), crs = 'EPSG:4326')
@@ -76,6 +90,14 @@ ggplot() +
   geom_sf(data = spp_thin) + 
   theme_void() +
   guides(fill="none")
+
+#### TEST ----
+plot(mad)
+plot(vect(spp_thin),add = T)
+plot(buffer(vect(spp_thin), 100000), add = T)
+aoi <- buffer(vect(spp_thin), 100000)
+aoi <- crop(terra::aggregate(aoi), mad)
+env_vars <- crop(env_vars, aoi, mask = T)
 
 ### 3. Generate background/pseudo-absence points ----
 set.seed(1)
@@ -99,15 +121,15 @@ spp_all <- sample_pseudoabs(data = spp_thin,
 ggplot() +
   geom_spatraster(data = env_vars[[1]]) +
   scale_fill_cross_blended_c(palette = 'arid', direction = -1) +
-  geom_sf(data = spp_all[spp_all$class == 'presence',]) + 
-  theme_void() +
+  geom_sf(data = spp_all[spp_all$class == 'presence',], col = '#F8766D') + 
+  theme_bw() +
   guides(fill="none") +
 
 ggplot() +
   geom_spatraster(data = env_vars[[1]]) +
   scale_fill_cross_blended_c(palette = 'arid', direction = -1) +
   geom_sf(data = spp_all, aes(col = class)) + 
-  theme_void() +
+  theme_bw() +
   guides(fill="none")
 
 ### 4. Process environmental variables
@@ -125,9 +147,6 @@ dist_env_vars <- spp_all %>%
 # suggested variables based on distance discrimination
 top15_vars <- names(dist_env_vars[1:15])
 
-# view pairs
-pairs(env_vars[[top15_vars]], maxcells = 10000)
-
 # identify multi-collinearity in environmental variables
 vars_uncor <- filter_collinear(env_vars[[top15_vars]], cutoff = 0.7, method = "cor_caret")
 vars_uncor
@@ -141,12 +160,17 @@ spp_all %>%
   plot_pres_vs_bg(class)
 
 ### 4. Spatial cross-validation design ----
-n_blocks <- 5
+n_blocks <- 5 # if you get warnings that there are no presences in some groups when fitting your models, try using less blocks
 set.seed(100)
 # cluster points using kmeans into n blocks
 spp_cv <- spatial_clustering_cv(data = spp_all, 
                                 cluster_function = 'kmeans',
                                 v = n_blocks)
+spp_cv <- spatial_block_cv(data = spp_all, method = 'random', v = 40)
+
+cv <- blockCV::cv_spatial(spp_all, column = 'class', r = env_vars, k = 5, selection = 'systematic', plot = F, seed = 1, rows_cols = c(160))
+spp_cv <- blockcv2rsample(cv, spp_all)
+tidysdm::check_splits_balance(spp_cv, 'class')
 
 # view folds
 autoplot(spp_cv, aes(shape = class)) +
@@ -194,6 +218,9 @@ params <- names(model_parameters)[which(!names(model_parameters) %in% c('model',
   group_by(model) %>%
   summarise(across(params, ~ toString(sort(unique(.))))))
 
+# save hyper-parameters used
+write_csv(hyper_parameters_used, 'output/tables/hyper_paramaters_used.csv')
+
 # create the model ensemble by selecting the best model using boyce_cont
 spp_ensemble <- simple_ensemble() %>%
   add_member(spp_models, metric = "boyce_cont")
@@ -213,6 +240,15 @@ species_final_params <- data.frame(spp = species_name,
            gbm_stop = final_parameters[[3]]$args$stop_iter[[2]])
 species_final_params
 
+# Save parameter outputs
+write_csv(species_final_params, 'output/tables/final_parameters.csv')
+
+# Extract the evaluation metrics
+(eval_metrics <- spp_ensemble %>% collect_metrics())
+
+# save the evaluation metrics
+write_csv(eval_metrics, 'output/tables/evaluation_metrics.csv')
+
 ### 6. Predict species suitability ----
 # use all models or a metric threshold e.g. boyce_cont >= 0.25
 pred_prob <- predict_raster(
@@ -230,10 +266,11 @@ ggplot() +
                         limits = c(0,1)) +
   geom_sf(data = spp_all[spp_all$class == 'presence',], 
           size = 0.5, alpha = 0.25) +
-  theme_void()
+  geom_spatvector(data = mad, fill = 'transparent') +
+  theme_bw()
 
-# apply the P10 threshold
-pred_binary <- sdm_threshold(pred_prob, st_coordinates(spp_thin), binary = TRUE)
+# apply the P20 threshold
+pred_binary <- sdm_threshold(pred_prob, st_coordinates(spp_thin), type = 'percentile', threshold = 0.2, binary = TRUE)
 
 # select threshold value
 # spp_ensemble <- calib_class_thresh(
@@ -252,14 +289,30 @@ pred_binary <- sdm_threshold(pred_prob, st_coordinates(spp_thin), binary = TRUE)
 
 # view prediction
 ggplot() +
-  geom_spatraster(data = as.factor(pred_binary)) +
-  scale_fill_manual(values = c('gray90', 'orange'), 
-                    na.value = 'transparent',
-                    name = 'Habitat\nsuitability',
-                    labels = c('absent', 'present', '')) +
+  geom_spatraster(data = pred_prob, 
+                  aes(fill = median)) +
+  scale_fill_whitebox_c(palette = 'high_relief', direction = -1,
+                        name = 'Habitat\nsuitability',
+                        limits = c(0,1)) +
   geom_sf(data = spp_all[spp_all$class == 'presence',], 
+          size = 0.5, alpha = 0.25) +
+  geom_spatvector(data = mad, fill = 'transparent') +
+  theme_bw() +
+
+ggplot() +
+  geom_spatraster(data = as.factor(pred_binary)) +
+  scale_fill_manual(values = c('gray90', 'orange'),
+                    na.value = 'transparent',
+                    name = 'Binary distribution',
+                    labels = c('absent', 'present', '')) +
+  geom_sf(data = spp_all[spp_all$class == 'presence',],
           size = 0.5, alpha = 0.25, col = 'black') +
-  theme_void()
+  geom_spatvector(data = mad, fill = 'transparent') +
+  theme_bw() &
+  plot_annotation(tag_levels = 'A', tag_suffix = ')')
+
+ggsave('output/figures/1_map_predictions.png',
+       width = 8.23, height = 4.9, dpi = 320)
 
 ### 7. Variable importance ----
 explain_models <- explain_tidysdm(spp_ensemble)
@@ -274,6 +327,8 @@ vi %>%
   coord_flip() +
   labs(x = '', y = 'Mean dropout loss (1 - AUC)') +
   theme_bw()
+ggsave('output/figures/2_variable_importance.png',
+       width = 5.73, height = 3, dpi = 320)
 
 # top 4 important variables
 vi_top4 <- vi %>%
@@ -319,7 +374,10 @@ agg_data %>%
   labs(x = vi_top4$variable[4], y = 'mean prediction') +
   scale_y_continuous(limits = c(0, max(agg_data$`_yhat_`))) +
   theme_bw() +
-  plot_annotation(tag_levels = 'a', tag_suffix = ')')
+  plot_annotation(tag_levels = 'A', tag_suffix = ')')
+
+ggsave('output/figures/3_response_curves.png',
+       width = 7.84, height = 5.2, dpi = 320)
 
 spp_all %>%
   dplyr::select(class, vi_top4$variable) %>%
@@ -348,7 +406,7 @@ plot(vect(prot_areas_all), add = TRUE)
 plot(pred_binary_proj)
 plot(vect(prot_areas_all_proj), add = TRUE)
 
-# What is the area of species presences?
+# What is the area of predicted species presences?
 # we select and sum only the cells with 1's, then multiply this by the size of the raster cells and lastly divide this by meters to get a result in km2.
 pres_area <- (sum(pred_binary_proj[] == 1, na.rm = TRUE) * (res(pred_binary_proj)[1]*res(pred_binary_proj)[2]) / (1000^2))
 paste('The area of species presences is',pres_area, 'km2')
@@ -382,12 +440,23 @@ head(extract_df)
 # we can now sum all of the area that overlaps with the protected areas for presences (i.e. 1's) and divide this by the total area of all presences
 area_under_pas <- extract_df %>% 
   filter(value == 1) %>% 
-  summarise(sum(total_area)/(1000^2))
+  summarise(total_area_under_pas = sum(total_area)/(1000^2))
 
 paste(round(area_under_pas/pres_area * 100, 2),'% of the predicted presences are found within protected areas')
 
-# Our final step is to join our IUCN protected area categories onto our presence area data.frame. This will provide us with some information on what percentage of our species area is conserved under different categories. This provides important context on both the quality and quantity of protected areas overlapping with our species range:
+#### join the protected areas vect file onto the area calculations
+prot_areas_all_proj_area <- prot_areas_all_proj %>%
+  left_join(filter(extract_df, value == 1), by = 'ORIG_NAME')
 
+ggplot() +
+  geom_spatvector(data = mad, fill = 'white') +
+  geom_spatvector(data = prot_areas_all_proj_area, aes(fill = total_area)) +
+  scale_fill_continuous(name = 'Total area of\nspecies covered\n(km2)', type = 'viridis') +
+  theme_bw()
+
+mapview::mapview(st_as_sf(prot_areas_all_proj_area), zcol = 'total_area')
+
+# Our final step is to join our IUCN protected area categories onto our presence area data.frame. This will provide us with some information on what percentage of our species area is conserved under different categories. This provides important context on both the quality and quantity of protected areas overlapping with our species range:
 iucn_cat <- prot_areas_all_proj %>% 
   st_drop_geometry() %>% 
   dplyr::select(ORIG_NAME, IUCN_CAT)
@@ -400,4 +469,3 @@ extract_df %>%
   mutate(perc = round(area/sum(area) * 100, 2))
 
 #### END ####
-renv::snapshot()

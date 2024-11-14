@@ -1,4 +1,4 @@
-# To install all of the packages we will need: select all of the lines of code and run them at the same time 
+# Run these lines one-by-one and if asked to update dependent packages, select yes.
 
 install.packages('rgbif')
 install.packages('CoordinateCleaner')
@@ -15,3 +15,4 @@ install.packages('ranger')
 install.packages('xgboost')
 install.packages('DALEX')
 install.packages('exactextractr')
+install.packages('mapview')
