@@ -14,22 +14,20 @@
 
 ##### To run the .R scripts:
 
-3.  Open the scripts folder. Then start by running the 0_Install_packages.R script. Then sequentially complete scripts 1 and 2.
+3.  Open the scripts folder. Then start by running the 0_Install_packages.R script. Only after runnig this can you move to the 1_tidysdms.R script.
 4.  Once the .R script is open, click the 'Run' button at the top of your screen.
 
 #### Folder structure:
 
--   data - environmental variables
--   output - figures
+-   data - environmental variables, world database of protected areas
+-   output - figures, tables
 -   scripts - scripts
--   slides - the PowerPoint slides used to provide background context for each session.
+-   slides - the PowerPoint slides used to provide background context.
 
 #### Assignment:
 
 Please find the word document, MSc_SA_Assessment.docx for details on the assignment.
 
-**You are required to submit your assignment as an .html file.**
+**You are required to submit your assignment as an .docx file together with your .R script.**
 
-This will be the default output setting of your RMarkdown document.
-
-Please find the assigned species names on QM+
+Please find the assigned species names on QM+ under Assigned_species.csv

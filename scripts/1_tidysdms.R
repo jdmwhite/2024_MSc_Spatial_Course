@@ -27,7 +27,6 @@ crs(mad) <- "lonlat"
 #### 1a. occurrence data ----
 # Name your species
 species_name <- c("Bauhinia madagascariensis")
-species_name <- c("Angraecum mauritianum")
 
 # download GBIF occurrence data for this species; this takes time if there are many data points!
 gbif_download <- occ_data(scientificName = species_name, hasCoordinate = TRUE, country = 'MG', limit = 10000)
@@ -90,14 +89,6 @@ ggplot() +
   geom_sf(data = spp_thin) + 
   theme_void() +
   guides(fill="none")
-
-#### TEST ----
-plot(mad)
-plot(vect(spp_thin),add = T)
-plot(buffer(vect(spp_thin), 100000), add = T)
-aoi <- buffer(vect(spp_thin), 100000)
-aoi <- crop(terra::aggregate(aoi), mad)
-env_vars <- crop(env_vars, aoi, mask = T)
 
 ### 3. Generate background/pseudo-absence points ----
 set.seed(1)
