@@ -17,6 +17,7 @@ library(sf)
 library(DALEX)
 library(exactextractr)
 library(mapview)
+library(blockCV)
 source('scripts/helper_functions/mtp.R')
 
 ### 1. Load in data ----
@@ -157,10 +158,13 @@ set.seed(100)
 spp_cv <- spatial_clustering_cv(data = spp_all, 
                                 cluster_function = 'kmeans',
                                 v = n_blocks)
-spp_cv <- spatial_block_cv(data = spp_all, method = 'random', v = 40)
 
-cv <- blockCV::cv_spatial(spp_all, column = 'class', r = env_vars, k = 5, selection = 'systematic', plot = F, seed = 1, rows_cols = c(160))
-spp_cv <- blockcv2rsample(cv, spp_all)
+# # alternative 1
+# spp_cv <- spatial_block_cv(data = spp_all, method = 'random', v = 40)
+
+# # alternative 2
+# cv <- blockCV::cv_spatial(spp_all, column = 'class', r = env_vars, k = 5, selection = 'systematic', plot = F, seed = 1, rows_cols = c(160))
+# spp_cv <- blockcv2rsample(cv, spp_all)
 tidysdm::check_splits_balance(spp_cv, 'class')
 
 # view folds
