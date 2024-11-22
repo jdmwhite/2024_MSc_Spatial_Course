@@ -25,7 +25,7 @@ source('scripts/helper_functions/mtp.R')
 mad <- vect(ne_countries(country = 'Madagascar', scale = 'medium'))
 crs(mad) <- "lonlat"
 
-#### 1a. occurrence data ----
+#### 1b. occurrence data ----
 # Name your species
 species_name <- c("Bauhinia madagascariensis")
 
@@ -36,7 +36,7 @@ gbif_download <- occ_data(scientificName = species_name, hasCoordinate = TRUE, c
 gbif_data <- gbif_download$data
 head(gbif_data)
 
-#### 1b. environmental data ----
+#### 1c. environmental data ----
 rast_files <- list.files(paste0(getwd(),'/data/environmental_data/'), full.names = T, recursive = T)
 env_vars <- app(sds(rast_files),c)
 names(env_vars) <- c("mean_ann_t",'mean_t_warm_q','mean_t_cold_q','ann_p', 'p_wet_m','p_dry_m','p_seas','p_wet_q','p_dry_q','p_warm_q','p_cold_q',"mean_diurnal_t_range","isothermality", "t_seas", 'max_t_warm_m','min_t_cold_m',"t_ann_range",'mean_t_wet_q','mean_t_dry_q', 'elev')
@@ -464,3 +464,7 @@ extract_df %>%
   mutate(perc = round(area/sum(area) * 100, 2))
 
 #### END ####
+
+#### For more information on each function and alternative methods using tidysdm, see:
+# https://evolecolgroup.github.io/tidysdm/articles/a0_tidysdm_overview.html
+# https://evolecolgroup.github.io/tidysdm/articles/a2_tidymodels_additions.html
