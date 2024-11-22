@@ -24,21 +24,24 @@ source('scripts/helper_functions/mtp.R')
 #### 1a. Country boundary ----
 mad <- vect(ne_countries(country = 'Madagascar', scale = 'medium'))
 crs(mad) <- "lonlat"
+# we'll use this as our area of interest, but consider changing this to more closely reflect your species geographical area
 
 #### 1b. occurrence data ----
-# Name your species
+# Name your species. *CHANGE THIS TO YOUR ASSIGNED SPECIES*
 species_name <- c("Bauhinia madagascariensis")
 
 # download GBIF occurrence data for this species; this takes time if there are many data points!
-gbif_download <- occ_data(scientificName = species_name, hasCoordinate = TRUE, country = 'MG', limit = 10000)
+gbif_download <- occ_search(scientificName = species_name, hasCoordinate = TRUE, country = 'MG', limit = 10000)
 
 # select only the data (ignore the other metadata for now)
 gbif_data <- gbif_download$data
 head(gbif_data)
 
 #### 1c. environmental data ----
+# load in the WorldClim 2.1 data downloaded from: https://www.worldclim.org/data/worldclim21.html
 rast_files <- list.files(paste0(getwd(),'/data/environmental_data/'), full.names = T, recursive = T)
 env_vars <- app(sds(rast_files),c)
+# give them better names
 names(env_vars) <- c("mean_ann_t",'mean_t_warm_q','mean_t_cold_q','ann_p', 'p_wet_m','p_dry_m','p_seas','p_wet_q','p_dry_q','p_warm_q','p_cold_q',"mean_diurnal_t_range","isothermality", "t_seas", 'max_t_warm_m','min_t_cold_m',"t_ann_range",'mean_t_wet_q','mean_t_dry_q', 'elev')
 names(env_vars)
 env_vars
@@ -49,7 +52,9 @@ plot(env_vars[[1]], main = names(env_vars)[[1]])
 spp_raw <- gbif_data %>% 
               dplyr::select(gbifID, scientificName, latitude = decimalLatitude, longitude = decimalLongitude)
 
-# CoordinateCleaner
+# CoordinateCleaner: remove occurrences with irregular values
+# GBIF recommended workflow: https://www.gbif.org/es/data-use/5lkEzTJaUPAZyCGUC3PDKC/coordinatecleaner-fast-and-standardized-cleaning-of-species-occurrence-data
+# See also: https://www.nature.com/articles/s41598-024-56158-3
 spp_raw <- spp_raw %>% 
                 clean_coordinates(
                   species = 'scientificName',
@@ -63,6 +68,7 @@ spp_clean <- spp_raw %>%
           filter(.summary == TRUE) %>%
           dplyr::select(gbifID:longitude)
 
+# visualise raw vs. clean data
 ggplot() +
   geom_spatvector(data = mad) +
   geom_point(data = spp_raw, aes(x = longitude, y = latitude)) +
@@ -75,6 +81,7 @@ ggplot() +
   labs(title = 'Cleaned GBIF data') +
   theme_bw()
 
+# Remove records with redundant information and to reduce errors associated with collection bias
 # spatial thin
 set.seed(1234567)
 spp_thin <- thin_by_cell(spp_clean, raster = env_vars[[1]])
@@ -83,7 +90,7 @@ nrow(spp_thin)
 # convert to sf 
 spp_thin <- st_as_sf(spp_thin, coords = c('longitude', 'latitude'), crs = 'EPSG:4326')
 
-# plot output
+# visualise output
 ggplot() +
   geom_spatraster(data = env_vars[[1]]) +
   scale_fill_cross_blended_c(palette = 'arid', direction = -1) +
@@ -100,7 +107,7 @@ spp_all <- sample_pseudoabs(data = spp_thin,
                              class_label = "pseudoabs",
                              return_pres = TRUE)
 
-# Alternative method
+# Alternative method: background sampling
 # set.seed(1)
 # spp_all <- sample_background(data = spp_thin, 
 #                             raster = env_vars,
@@ -152,6 +159,8 @@ spp_all %>%
   plot_pres_vs_bg(class)
 
 ### 4. Spatial cross-validation design ----
+# for effective evaluation and to test model transferability, we set up a several training vs. testing folds using cross-validation
+
 n_blocks <- 5 # if you get warnings that there are no presences in some groups when fitting your models, try using less blocks
 set.seed(100)
 # cluster points using kmeans into n blocks
@@ -160,11 +169,15 @@ spp_cv <- spatial_clustering_cv(data = spp_all,
                                 v = n_blocks)
 
 # # alternative 1
-# spp_cv <- spatial_block_cv(data = spp_all, method = 'random', v = 40)
+# n_blocks <- 40
+# spp_cv <- spatial_block_cv(data = spp_all, method = 'random', v = n_blocks)
 
 # # alternative 2
-# cv <- blockCV::cv_spatial(spp_all, column = 'class', r = env_vars, k = 5, selection = 'systematic', plot = F, seed = 1, rows_cols = c(160))
+# n_blocks <- 5
+# cv <- blockCV::cv_spatial(spp_all, column = 'class', r = env_vars, k = n_blocks, selection = 'systematic', plot = F, seed = 1, rows_cols = c(160))
 # spp_cv <- blockcv2rsample(cv, spp_all)
+
+# # alternative 3: look up 'targeted group backgrounds' on tidysdm
 tidysdm::check_splits_balance(spp_cv, 'class')
 
 # view folds
@@ -174,7 +187,7 @@ autoplot(spp_cv, aes(shape = class)) +
 
 ### 5. Run distribution models ----
 # create the model formula
-spp_rec <- recipe(spp_all, formula = class ~ .)
+spp_rec <- recipe(spp_all, formula = class ~ .) # the . = all other columns in the dataset, but ignores .geometry
 
 # design the model workflows
 spp_models <- workflow_set(
@@ -186,18 +199,22 @@ spp_models <- workflow_set(
   # tweak controls to store information needed later to create the ensemble
   option_add(control = control_ensemble_grid())
 
+# alternative: test using more or less models, see https://evolecolgroup.github.io/tidysdm/reference/index.html for list of alternative models
+
 # run the models
+# here we specify our combination of splits/folds/resamples, how many parameter combinations we test per algorithm (grid = 5), and which parameters we want to test (sdm_metric_set).
 set.seed(1)
 spp_models <- spp_models %>%
                 workflow_map('tune_grid',
                             resamples = spp_cv,
-                            grid = 5,
+                            grid = 10,
                             metrics = sdm_metric_set(),
                             verbose = T)
 
 # show mean metric values for each model configuration
-# spp_models %>% collect_metrics()
+spp_models %>% collect_metrics()
 autoplot(spp_models)
+# We are testing all of these different parameters to optimise our models, based on the available data (occs + env), algorithms (maxent, gbm, rf) and parameters we choose (CV, pseudoabs, hyperparameters), because we want to create an accurate prediction; not hypothesis test.
 
 # extract hyper-parameters and metrics for individual models
 model_results <- spp_models$result
@@ -264,22 +281,26 @@ ggplot() +
   geom_spatvector(data = mad, fill = 'transparent') +
   theme_bw()
 
-# apply the P20 threshold
-pred_binary <- sdm_threshold(pred_prob, st_coordinates(spp_thin), type = 'percentile', threshold = 0.2, binary = TRUE)
+# using a species presence specific threshold
+# apply the 10th percentile training presence threshold
+pred_binary <- sdm_threshold(pred_prob, st_coordinates(spp_thin), type = 'percentile', threshold = 0.1, binary = TRUE)
+# this omits the bottom 10th percentile of presences from the binary map
+# test different threshold values (e.g. 0, 0.2, 0.5)
 
-# select threshold value
+# # alternative: use model-specific thresholds
+# # select threshold value
 # spp_ensemble <- calib_class_thresh(
 #                     spp_ensemble,
-#                     class_thresh = c('sensitivity', 0.75), 
-#                     metric_thresh = c("boyce_cont", 0.4))
-
-# # create a binary map
+#                     class_thresh = c('tss_max'),
+#                     metric_thresh = c("boyce_cont", 0.25))
+# 
+# # # create a binary map
 # pred_binary <- predict_raster(
-#   spp_ensemble, 
+#   spp_ensemble,
 #   env_vars,
 #   type = "class",
-#   class_thresh = c('sensitivity', 0.75), 
-#   metric_thresh = c("boyce_cont", 0.4),
+#   class_thresh = c('tss_max'),
+#   metric_thresh = c("boyce_cont", 0.25),
 #   fun = "median")
 
 # view prediction
@@ -294,6 +315,7 @@ ggplot() +
   geom_spatvector(data = mad, fill = 'transparent') +
   theme_bw() +
 
+# note: if you use tss_max, you need to change the order of the colour values and the order of the labels!
 ggplot() +
   geom_spatraster(data = as.factor(pred_binary)) +
   scale_fill_manual(values = c('gray90', 'orange'),
@@ -311,7 +333,7 @@ ggsave('output/figures/1_map_predictions.png',
 
 ### 7. Variable importance ----
 explain_models <- explain_tidysdm(spp_ensemble)
-vi <- model_parts(explain_models)
+vi <- model_parts(explain_models, type = 'variable_importance')
 
 # view variable importance
 vi %>%
