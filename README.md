@@ -31,3 +31,5 @@ Please find the word document, MSc_SA_Assessment.docx on QM+ for details on the 
 **You are required to submit your assignment as an .docx file together with your .R script.**
 
 Please find the assigned species names on QM+ under Assigned_species.csv
+
+For more information on tidysdm, see Leonardi et al. (2024) (https://doi.org/10.1111/2041-210X.14406) and their excellent website: evolecolgroup.github.io/tidysdm/
